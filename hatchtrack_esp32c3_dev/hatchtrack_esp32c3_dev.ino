@@ -14,13 +14,26 @@
 #include <Attribute_Request.h>
 #include <Shared_Attribute_Update.h>
 #include <ThingsBoard.h>
+#include <SensirionI2cSht4x.h>
+#include <Wire.h>
+// macro definitions
+// make sure that we use the proper definition of NO_ERROR
+#ifdef NO_ERROR
+#undef NO_ERROR
+#endif
+#define NO_ERROR 0
+
+SensirionI2cSht4x sensor;
+
+static char errorMessage[64];
+static int16_t error;
 
 constexpr char WIFI_SSID[] = "";
 constexpr char WIFI_PASSWORD[] = "";
 
 // See https://thingsboard.io/docs/getting-started-guides/helloworld/
 // to understand how to obtain an access token
-constexpr char TOKEN[] = ""; //P1
+constexpr char TOKEN[] = "";
 
 // Thingsboard we want to establish a connection too
 constexpr char THINGSBOARD_SERVER[] = "hatch.hatchtrack.com";
@@ -285,6 +298,22 @@ void setup() {
   }
   delay(1000);
   InitWiFi();
+   Wire.begin(7,6);
+    sensor.begin(Wire, SHT40_I2C_ADDR_44);
+
+    sensor.softReset();
+    delay(10);
+    uint32_t serialNumber = 0;
+    error = sensor.serialNumber(serialNumber);
+    if (error != NO_ERROR) {
+        Serial.print("Error trying to execute serialNumber(): ");
+        errorToString(error, errorMessage, sizeof errorMessage);
+        Serial.println(errorMessage);
+        return;
+    }
+    Serial.print("serialNumber: ");
+    Serial.print(serialNumber);
+    Serial.println();
 }
 
 void loop() {
@@ -359,18 +388,37 @@ void loop() {
       digitalWrite(LED_BUILTIN, ledState);
     }
   }
-  
+
   // Sending telemetry every telemetrySendInterval time
   if (millis() - previousDataSend > telemetrySendInterval) {
     previousDataSend = millis();
      double temperature = generateMockTemperature();
      double humidity = generateMockHumidity();
-  Serial.print("Temperature: ");
-  Serial.println(temperature);
+     float aTemperature = 0.0;
+     float aHumidity = 0.0;
+
+    delay(2000);
+    error = sensor.measureLowestPrecision(aTemperature, aHumidity);
+    if (error != NO_ERROR) {
+        Serial.print("Error trying to execute measureLowestPrecision(): ");
+        errorToString(error, errorMessage, sizeof errorMessage);
+        Serial.println(errorMessage);
+        return;
+    }
+     double dTemperature = (double)aTemperature;
+     double dHumidity = (double)aHumidity;
+    Serial.print("aTemperature: ");
+    Serial.print(aTemperature);
+    Serial.print("\t");
+    Serial.print("aHumidity: ");
+    Serial.print(aHumidity);
+    Serial.println();
+    Serial.print("Temperature: ");
+    Serial.println(temperature);
     Serial.print("Humidity: ");
-  Serial.println(humidity);
-    tb.sendTelemetryData("temperature", temperature);
-    tb.sendTelemetryData("humidity", humidity);
+    Serial.println(humidity);
+    tb.sendTelemetryData("temperature", dTemperature);
+    tb.sendTelemetryData("humidity", dHumidity);
     tb.sendAttributeData("rssi", WiFi.RSSI());
     tb.sendAttributeData("channel", WiFi.channel());
     tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
