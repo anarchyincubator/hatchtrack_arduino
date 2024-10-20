@@ -15,24 +15,21 @@
 #include <Shared_Attribute_Update.h>
 #include <ThingsBoard.h>
 
-constexpr char WIFI_SSID[] = "YOUR_WIFI_SSID";
-constexpr char WIFI_PASSWORD[] = "YOUR_WIFI_PASSWORD";
+constexpr char WIFI_SSID[] = "";
+constexpr char WIFI_PASSWORD[] = "";
 
 // See https://thingsboard.io/docs/getting-started-guides/helloworld/
 // to understand how to obtain an access token
-constexpr char TOKEN[] = "YOUR_ACCESS_TOKEN";
+constexpr char TOKEN[] = ""; //P1
 
 // Thingsboard we want to establish a connection too
-constexpr char THINGSBOARD_SERVER[] = "demo.thingsboard.io";
+constexpr char THINGSBOARD_SERVER[] = "hatch.hatchtrack.com";
 // MQTT port used to communicate with the server, 1883 is the default unencrypted MQTT port.
 constexpr uint16_t THINGSBOARD_PORT = 1883U;
 
 // Maximum size packets will ever be sent or received by the underlying MQTT client,
 // if the size is to small messages might not be sent or received messages will be discarded
 constexpr uint32_t MAX_MESSAGE_SIZE = 1024U;
-
-// Baud rate for the debugging serial connection.
-// If the Serial output is mangled, ensure to change the monitor speed accordingly to this variable
 constexpr uint32_t SERIAL_DEBUG_BAUD = 115200U;
 
 // Maximum amount of attributs we can request or subscribe, has to be set both in the ThingsBoard template list and Attribute_Request_Callback template list
@@ -84,7 +81,7 @@ volatile uint16_t blinkingInterval = 1000U;
 uint32_t previousStateChange;
 
 // For telemetry
-constexpr int16_t telemetrySendInterval = 2000U;
+constexpr int32_t telemetrySendInterval = 60000U;
 uint32_t previousDataSend;
 
 // List of shared attributes for subscribing to their updates
@@ -163,6 +160,79 @@ void processSetLedMode(const JsonVariantConst &data, JsonDocument &response) {
 const std::array<RPC_Callback, 1U> callbacks = {
   RPC_Callback{ "setLedMode", processSetLedMode }
 };
+
+// Set the ideal hatching temperature and deviation limits
+const float idealTemperature = 37.5; // Example ideal temperature in Celsius
+const float temperatureDeviationPercent = 0.05;  // 5% deviation
+const float minTemp = idealTemperature * (1.0 - temperatureDeviationPercent); // Minimum temperature (95% of ideal)
+const float maxTemp = idealTemperature * (1.0 + temperatureDeviationPercent); // Maximum temperature (105% of ideal)
+
+// Set the ideal humidity and deviation limits
+const float idealHumidity = 50.0; // Example ideal humidity in percentage
+const float humidityDeviationPercent = 0.05; // 5% deviation
+const float minHumidity = idealHumidity * (1.0 - humidityDeviationPercent); // Minimum humidity (95% of ideal)
+const float maxHumidity = idealHumidity * (1.0 + humidityDeviationPercent); // Maximum humidity (105% of ideal)
+
+// Variables to track previous values for temperature and humidity
+float currentTemperature = idealTemperature;
+float currentHumidity = idealHumidity;
+
+// Time variable to simulate a day-night cycle
+unsigned long lastUpdate = 0;
+const unsigned long updateInterval = 10000; // Update every 10 seconds
+float timeFactor = 0; // This will increment slowly to simulate day-night cycle
+
+
+float generateMockTemperature() {
+  // Sinusoidal fluctuation for day-night cycle
+  float dayNightCycle = sin(timeFactor) * (idealTemperature * 0.02); // 2% day-night fluctuation
+  
+  // Gradual drift - small random increment/decrement
+  float temperatureDrift = random(-5, 6) / 100.0; // Drift by +/- 0.05°C
+  
+  // Add the drift and cycle to the current temperature
+  currentTemperature += temperatureDrift + dayNightCycle;
+
+  // Ensure the temperature stays within the 5% deviation, but allow occasional outliers (1 in 50 chance)
+  if (random(500) == 1) {
+    currentTemperature += random(-3, 4); // Occasional spike/dip by a larger margin
+  } else {
+    // Clamp the temperature within the normal range
+    if (currentTemperature < minTemp) currentTemperature = minTemp;
+    if (currentTemperature > maxTemp) currentTemperature = maxTemp;
+  }
+  
+  // Add a small noise for jitter
+  currentTemperature += random(-10, 11) / 100.0; // +/- 0.1°C of noise
+  
+  return currentTemperature;
+}
+
+// Function to generate a gradual, real-world-like humidity with sinusoidal fluctuation
+float generateMockHumidity() {
+  // Sinusoidal fluctuation for day-night cycle
+  float dayNightCycle = sin(timeFactor) * (idealHumidity * 0.02); // 2% day-night fluctuation
+  
+  // Gradual drift - small random increment/decrement
+  float humidityDrift = random(-5, 6) / 100.0; // Drift by +/- 0.05% humidity
+  
+  // Add the drift and cycle to the current humidity
+  currentHumidity += humidityDrift + dayNightCycle;
+  
+  // Ensure the humidity stays within the 5% deviation, but allow occasional outliers (1 in 50 chance)
+  if (random(500) == 1) {
+    currentHumidity += random(-10, 11); // Occasional spike/dip by a larger margin
+  } else {
+    // Clamp the humidity within the normal range
+    if (currentHumidity < minHumidity) currentHumidity = minHumidity;
+    if (currentHumidity > maxHumidity) currentHumidity = maxHumidity;
+  }
+  
+  // Add a small noise for jitter
+  currentHumidity += random(-5, 6) / 100.0; // +/- 0.05% of noise
+  
+  return currentHumidity;
+}
 
 
 /// @brief Update callback that will be called as soon as one of the provided shared attributes changes value,
@@ -289,11 +359,18 @@ void loop() {
       digitalWrite(LED_BUILTIN, ledState);
     }
   }
-
+  
   // Sending telemetry every telemetrySendInterval time
   if (millis() - previousDataSend > telemetrySendInterval) {
     previousDataSend = millis();
-    tb.sendTelemetryData("temperature", random(10, 20));
+     double temperature = generateMockTemperature();
+     double humidity = generateMockHumidity();
+  Serial.print("Temperature: ");
+  Serial.println(temperature);
+    Serial.print("Humidity: ");
+  Serial.println(humidity);
+    tb.sendTelemetryData("temperature", temperature);
+    tb.sendTelemetryData("humidity", humidity);
     tb.sendAttributeData("rssi", WiFi.RSSI());
     tb.sendAttributeData("channel", WiFi.channel());
     tb.sendAttributeData("bssid", WiFi.BSSIDstr().c_str());
